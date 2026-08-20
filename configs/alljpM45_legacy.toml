@@ -1,0 +1,142 @@
+# ETAS2D reproduction of data/alljpM45.yaml.
+
+[runtime]
+device = "cuda:0"
+dtype = "float32"
+
+[catalog]
+path = "../data/alljpM45.parquet"
+columns_preset = "geographic_earthquake"
+event_id_column = "index"
+completeness_magnitude = 4.5
+time_unit = "day"
+distance_unit = "degree"
+coordinate_system = "EPSG:4326"
+depth_unit = "km"
+depth_positive = "down"
+sort_by_time = true
+
+[catalog.duplicates]
+time_policy = "jitter"
+position_policy = "jitter"
+position_minimum_separation_m = 0.05
+warn = true
+
+[projection]
+method = "legacy_local_approx"
+source_crs = "EPSG:4326"
+
+[domain]
+time_zero = 0.0
+time_start = 10000.0
+time_end = 23376.0
+include_start = true
+include_end = true
+polygon = [
+  [134.0, 31.9],
+  [137.9, 33.0],
+  [143.1, 33.2],
+  [144.9, 35.2],
+  [147.8, 41.3],
+  [137.8, 44.2],
+  [137.4, 40.2],
+  [135.1, 38.0],
+  [130.6, 35.4],
+]
+
+[model]
+type = "etas2d"
+
+[model.integration]
+type = "polygon"
+subdivisions = 1001
+source_chunk_size = 4000
+
+[model.parameters.mu]
+value = 0.9512
+lower_bound = 0.005
+
+[model.parameters.amplitude]
+value = 0.4984
+lower_bound = 0.002
+
+[model.parameters.alpha]
+value = 1.0649
+lower_bound = 0.1
+
+[model.parameters.gamma]
+value = 0.4761
+lower_bound = 0.05
+
+[model.parameters.p]
+value = 1.190
+lower_bound = 1.00001
+
+[model.parameters.c]
+value = 0.01317
+lower_bound = 0.00002
+
+[model.parameters.d]
+value = 0.0017
+lower_bound = 0.000001
+
+[model.parameters.q]
+value = 1.959
+lower_bound = 1.0002
+upper_bound = 3.0
+
+[background]
+type = "gaussian_kde"
+target_chunk_size = 4000
+source_chunk_size = 4000
+
+[background.bandwidth]
+method = "knn"
+neighbors = 5
+minimum = 0.05
+target_chunk_size = 4000
+source_chunk_size = 4000
+
+[background.state]
+initial_probability = 1.0
+duration = "observation"
+
+[background.integration]
+type = "polygon"
+subdivisions = 1001
+source_chunk_size = 4000
+
+[likelihood]
+type = "exact"
+target_chunk_size = 4000
+source_chunk_size = 4000
+checkpoint_blocks = true
+
+[inference]
+type = "legacy_em_lbfgs"
+
+[inference.em]
+outer_iterations = 20
+e_steps_per_outer = 11
+decrease_e_steps = true
+
+[inference.lbfgs]
+lr = 0.05
+max_iter = 20
+history_size = 10
+line_search = "strong_wolfe"
+
+[inference.convergence]
+background_tolerance = 1e-7
+parameter_tolerance = 1e-7
+
+[output]
+enabled = true
+directory = "../output/alljpM45_torchstpp_test"
+
+[relations]
+enabled = true
+directory = "relations"
+probability_threshold = 1e-4
+target_chunk_size = 4000
+source_chunk_size = 4000

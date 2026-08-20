@@ -1,0 +1,27 @@
+1. Accuracy
+庄与郭的开源
+数据使用：使用对应的开源软件里面的数据
+与旧的fortran比较
+使用的是float64比，参数
+float32也比，参数
+
+2. Runtime and parallel scalability
+数据使用：Noto
+cpu运行1核，8核，16，32，64，96核
+时间记录
+GPU 单卡，L20 checkpointing以及非checkpointing，float64
+GPU 多卡 1，2，4，6
+
+3.
+选择不同事件数量（由不同的完备震级带来）
+QTM目录
+N=1000，5000，10000，15000，20000，40000，120000
+float64,尝试单卡
+画事件-用时曲线
+
+4.End to end
+进行一次尝试多卡的超大型目录的尝试
+输出具体的结果
+和N=15000进行比较分析
+
+

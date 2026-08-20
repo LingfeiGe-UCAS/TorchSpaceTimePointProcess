@@ -1,0 +1,82 @@
+[runtime]
+device = "cpu"
+dtype = "float64"
+
+[catalog]
+path = "data/custom_etas3d_catalog.csv"
+columns_preset = "geographic_earthquake"
+completeness_magnitude = 3.5
+time_unit = "day"
+distance_unit = "degree"
+coordinate_system = "EPSG:4326"
+depth_unit = "km"
+depth_positive = "down"
+
+[projection]
+method = "legacy_local_approx"
+
+[domain]
+time_zero = 0.0
+time_start = 1.0
+time_end = 7.0
+bbox = [100.0, 30.0, 101.0, 31.0]
+
+[model]
+type = "custom_etas3d"
+maximum_depth = 40.0
+depth_boundary_offset = 0.5
+
+[model.integration]
+type = "infinite_space"
+
+[model.parameters.eta]
+value = 8.0
+
+[model.parameters.delta]
+value = 0.2
+
+[background]
+type = "gaussian_beta_kde"
+depth_concentration = 6.0
+target_chunk_size = 4
+source_chunk_size = 4
+
+[background.bandwidth]
+method = "knn"
+neighbors = 2
+minimum = 0.02
+target_chunk_size = 4
+source_chunk_size = 4
+
+[background.integration]
+type = "infinite_space"
+
+[likelihood]
+type = "exact"
+target_chunk_size = 3
+source_chunk_size = 4
+checkpoint_blocks = false
+
+[inference]
+type = "legacy_em_lbfgs"
+
+[inference.em]
+outer_iterations = 1
+e_steps_per_outer = 1
+decrease_e_steps = false
+
+[inference.lbfgs]
+lr = 0.01
+max_iter = 1
+history_size = 2
+line_search = "none"
+
+[inference.convergence]
+background_tolerance = 0.0
+parameter_tolerance = 0.0
+
+[output]
+enabled = false
+
+[relations]
+enabled = false

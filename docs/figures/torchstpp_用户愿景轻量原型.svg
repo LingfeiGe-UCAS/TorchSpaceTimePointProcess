@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <style>
+      .bg{fill:#f6f8fb}.title{font:700 38px 'Microsoft YaHei',Arial;fill:#102a43}.sub{font:400 18px 'Microsoft YaHei',Arial;fill:#627d98}
+      .h{font:700 23px 'Microsoft YaHei',Arial;fill:#102a43}.t{font:400 17px 'Microsoft YaHei',Arial;fill:#334e68}.sm{font:400 14px 'Microsoft YaHei',Arial;fill:#627d98}.mono{font:400 16px Consolas,'Microsoft YaHei';fill:#d9e2ec}
+      .panel{fill:#fff;stroke:#d5dee8;stroke-width:2}.input{fill:#f8fafc;stroke:#bcccdc;stroke-width:1.5}.btn{fill:#2e5b88}.btnText{font:700 17px 'Microsoft YaHei';fill:#fff}.ok{fill:#e7f3ed;stroke:#71a58d;stroke-width:1.5}.accent{fill:#e8f1f8;stroke:#78a1c2;stroke-width:1.5}
+      .arrow{fill:none;stroke:#829ab1;stroke-width:3;marker-end:url(#a)}.label{font:700 14px 'Microsoft YaHei';fill:#486581;letter-spacing:1px}
+    </style>
+    <marker id="a" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#829ab1"/></marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#102a43" flood-opacity=".12"/></filter>
+  </defs>
+  <rect class="bg" width="1600" height="1000"/>
+  <text class="title" x="70" y="72">用户愿景原型（轻量）</text>
+  <text class="sub" x="70" y="108">核心仍是可脚本化 Python API；轻量运行面板只负责配置、启动和查看结果，不承载科学模型实现</text>
+
+  <rect x="70" y="145" width="1460" height="785" rx="22" class="panel" filter="url(#shadow)"/>
+  <rect x="70" y="145" width="1460" height="64" rx="22" fill="#102a43"/>
+  <circle cx="105" cy="177" r="8" fill="#ef6b5b"/><circle cx="132" cy="177" r="8" fill="#f2be4f"/><circle cx="159" cy="177" r="8" fill="#62c277"/>
+  <text x="205" y="185" style="font:700 20px 'Microsoft YaHei';fill:#fff">TorchSTPP · Run ETAS2D</text>
+  <text x="1330" y="184" style="font:400 15px 'Microsoft YaHei';fill:#bcccdc">single GPU · v0.1</text>
+
+  <text class="label" x="105" y="255">01 配置一次运行</text>
+  <rect x="105" y="280" width="430" height="610" rx="16" fill="#fbfcfe" stroke="#d5dee8" stroke-width="2"/>
+  <text class="h" x="135" y="325">数据</text>
+  <text class="sm" x="135" y="355">事件目录</text><rect x="135" y="370" width="340" height="46" rx="8" class="input"/><text class="t" x="153" y="400">catalog.csv</text><rect x="485" y="370" width="28" height="46" rx="7" fill="#e8f1f8"/><text class="t" x="493" y="400">…</text>
+  <rect x="135" y="432" width="350" height="66" rx="10" class="ok"/><text class="t" x="155" y="460">✓ 12,043 个事件 · 已按时间排序</text><text class="sm" x="155" y="484">M≥3.5 · 2018-01-01 — 2020-12-31</text>
+  <text class="h" x="135" y="548">模型</text>
+  <text class="sm" x="135" y="578">内置模型</text><rect x="135" y="593" width="350" height="46" rx="8" class="input"/><text class="t" x="153" y="623">ETAS2D / isotropic power-law  ▾</text>
+  <text class="sm" x="135" y="660">计算设置</text>
+  <rect x="135" y="675" width="165" height="46" rx="8" class="input"/><text class="t" x="153" y="705">cuda:0  ▾</text>
+  <rect x="320" y="675" width="165" height="46" rx="8" class="input"/><text class="t" x="338" y="705">float32  ▾</text>
+  <text class="sm" x="135" y="758">事件对输出</text><rect x="135" y="773" width="350" height="46" rx="8" class="input"/><text class="t" x="153" y="803">概率阈值  0.0001</text>
+  <rect x="135" y="838" width="350" height="52" rx="10" class="btn"/><text class="btnText" x="248" y="871">开始完整拟合</text>
+
+  <path class="arrow" d="M555 585 L610 585"/>
+  <text class="label" x="625" y="255">02 运行与诊断</text>
+  <rect x="625" y="280" width="400" height="610" rx="16" fill="#102a43"/>
+  <text class="mono" x="655" y="325">$ torchstpp fit run.yaml</text>
+  <text class="mono" x="655" y="372" fill="#9fb3c8">[data] validation ........ OK</text>
+  <text class="mono" x="655" y="408" fill="#9fb3c8">[device] NVIDIA L20 / fp32</text>
+  <text class="mono" x="655" y="444" fill="#9fb3c8">[model] ETAS2D / 8 params</text>
+  <text class="mono" x="655" y="500">LBFGS iteration  18 / 60</text>
+  <rect x="655" y="526" width="330" height="13" rx="6" fill="#334e68"/><rect x="655" y="526" width="190" height="13" rx="6" fill="#70b7d3"/>
+  <text class="mono" x="655" y="580">NLL        42,815.293</text>
+  <text class="mono" x="655" y="616">grad norm       0.0038</text>
+  <text class="mono" x="655" y="652">block       2048 × 4096</text>
+  <text class="mono" x="655" y="688">GPU memory      7.4 GB</text>
+  <text class="mono" x="655" y="750" fill="#8fd3b5">✓ converged: tolerance_grad</text>
+  <text class="mono" x="655" y="786" fill="#8fd3b5">✓ relations: 86,421 rows</text>
+  <text class="mono" x="655" y="840" fill="#9fb3c8">runs/2026-08-12_etas2d_001/</text>
+
+  <path class="arrow" d="M1045 585 L1100 585"/>
+  <text class="label" x="1115" y="255">03 查看并复现</text>
+  <rect x="1115" y="280" width="380" height="610" rx="16" fill="#fbfcfe" stroke="#d5dee8" stroke-width="2"/>
+  <text class="h" x="1145" y="325">拟合完成</text><rect x="1385" y="296" width="80" height="38" rx="19" fill="#e7f3ed"/><text class="sm" x="1405" y="320" fill="#3f7d65">CONVERGED</text>
+  <rect x="1145" y="360" width="145" height="105" rx="12" class="accent"/><text class="sm" x="1165" y="390">最终 NLL</text><text class="h" x="1165" y="435">42,815.3</text>
+  <rect x="1310" y="360" width="155" height="105" rx="12" class="accent"/><text class="sm" x="1330" y="390">总耗时</text><text class="h" x="1330" y="435">1m 34s</text>
+  <text class="h" x="1145" y="515">参数</text>
+  <text class="t" x="1145" y="555">μ</text><text class="t" x="1280" y="555">0.0213</text><line x1="1145" y1="570" x2="1465" y2="570" stroke="#d9e2ec"/>
+  <text class="t" x="1145" y="603">A</text><text class="t" x="1280" y="603">0.1847</text><line x1="1145" y1="618" x2="1465" y2="618" stroke="#d9e2ec"/>
+  <text class="t" x="1145" y="651">c / p</text><text class="t" x="1280" y="651">0.006 / 1.12</text><line x1="1145" y1="666" x2="1465" y2="666" stroke="#d9e2ec"/>
+  <text class="t" x="1145" y="699">d / q / γ</text><text class="t" x="1280" y="699">…</text>
+  <text class="h" x="1145" y="755">产物</text>
+  <text class="t" x="1145" y="790">parameters.json</text><text class="sm" x="1423" y="790">下载</text>
+  <text class="t" x="1145" y="825">optimization.csv</text><text class="sm" x="1423" y="825">下载</text>
+  <text class="t" x="1145" y="860">relations.parquet</text><text class="sm" x="1423" y="860">下载</text>
+
+  <rect x="105" y="945" width="1390" height="34" rx="17" fill="#e8f1f8"/><text class="sm" x="130" y="968">实现原则：面板生成 config 并调用同一 Python API；命令行、Notebook 和面板得到相同结果。第一版可只交付 API + CLI，面板作为后续轻量包装。</text>
+</svg>

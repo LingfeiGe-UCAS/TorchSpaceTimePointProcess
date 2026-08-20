@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torchstpp"
+version = "0.1.0"
+description = "A PyTorch framework for spatiotemporal point processes."
+requires-python = ">=3.10"
+dependencies = ["torch", "polars>=1.0", "pyproj>=3.6"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+torchstpp = "torchstpp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

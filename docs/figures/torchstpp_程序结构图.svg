@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.title{font:700 38px 'Microsoft YaHei',Arial;fill:#102a43}.sub{font:400 18px 'Microsoft YaHei',Arial;fill:#627d98}
+      .h{font:700 23px 'Microsoft YaHei',Arial;fill:#102a43}.t{font:400 17px 'Microsoft YaHei',Arial;fill:#334e68}.sm{font:400 15px 'Microsoft YaHei',Arial;fill:#627d98}
+      .box{stroke-width:2}.blue{fill:#e8f1f8;stroke:#4e7da3}.green{fill:#e8f3ed;stroke:#4d806c}.gold{fill:#fbf2dc;stroke:#b7831d}.gray{fill:#f1f4f7;stroke:#9fb3c8}.future{fill:#fff;stroke:#9fb3c8;stroke-dasharray:9 7}
+      .arrow{fill:none;stroke:#486581;stroke-width:3;marker-end:url(#arrow)}.dash{fill:none;stroke:#829ab1;stroke-width:2.5;stroke-dasharray:8 7;marker-end:url(#arrow2)}
+      .lane{font:700 16px 'Microsoft YaHei',Arial;fill:#486581;letter-spacing:1px}.tag{font:700 14px 'Microsoft YaHei',Arial;fill:#fff}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#486581"/></marker>
+    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#829ab1"/></marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#102a43" flood-opacity=".10"/></filter>
+  </defs>
+  <rect class="bg" width="1600" height="1000"/>
+  <text class="title" x="70" y="72">TorchSTPP 程序结构图</text>
+  <text class="sub" x="70" y="108">单 GPU 第一版：科学模型与计算引擎解耦；接口少、可测试，未来扩展三维、有限震源和多 GPU</text>
+
+  <rect x="70" y="145" width="1460" height="74" rx="18" class="gray box" filter="url(#shadow)"/>
+  <rect x="92" y="165" width="110" height="34" rx="17" fill="#2e5b88"/><text class="tag" x="117" y="188">用户入口</text>
+  <text class="h" x="235" y="190">Python API / 配置文件 / 示例脚本</text>
+  <text class="sm" x="650" y="188">fit() · compute_requested_pairs() · iter_relations() · save_run()</text>
+
+  <text class="lane" x="70" y="275">科学对象</text>
+  <rect x="70" y="300" width="315" height="180" rx="18" class="blue box" filter="url(#shadow)"/>
+  <text class="h" x="98" y="340">data</text><text class="t" x="98" y="380">EventCatalog</text><text class="sm" x="98" y="410">event_id · time · x · y · magnitude</text><text class="sm" x="98" y="440">排序 · 校验 · to(device, dtype)</text>
+  <rect x="420" y="300" width="315" height="180" rx="18" class="blue box" filter="url(#shadow)"/>
+  <text class="h" x="448" y="340">domain</text><text class="t" x="448" y="380">ObservationWindow</text><text class="sm" x="448" y="410">时间范围 · RectangleDomain</text><text class="sm" x="448" y="440">contains() · 边界与积分区域</text>
+  <rect x="770" y="300" width="500" height="180" rx="18" class="green box" filter="url(#shadow)"/>
+  <text class="h" x="798" y="340">models / ETAS2D</text>
+  <text class="t" x="798" y="380">Background + Productivity + Temporal + Spatial</text>
+  <text class="sm" x="798" y="414">background_rate(targets)</text><text class="sm" x="1035" y="414">pairwise_rate(sources, targets)</text>
+  <text class="sm" x="798" y="446">source_integral(sources, window) · 动态 nn.Parameter</text>
+  <rect x="1305" y="300" width="225" height="180" rx="18" class="future box"/>
+  <text class="h" x="1334" y="340">扩展模型</text><text class="sm" x="1334" y="382">ETAS3D</text><text class="sm" x="1334" y="412">Finite-source ETAS</text><text class="sm" x="1334" y="442">其他点过程</text>
+
+  <path class="arrow" d="M228 219 L228 292"/><path class="arrow" d="M578 219 L578 292"/><path class="arrow" d="M1018 219 L1018 292"/>
+  <path class="dash" d="M1270 390 L1295 390"/>
+
+  <text class="lane" x="70" y="545">通用计算</text>
+  <rect x="70" y="570" width="470" height="190" rx="18" class="gold box" filter="url(#shadow)"/>
+  <text class="h" x="98" y="610">likelihood</text>
+  <text class="t" x="98" y="650">CPU float64 reference</text><text class="sm" x="98" y="680">简单双循环：数值裁判</text>
+  <text class="t" x="310" y="650">Exact single-GPU engine</text><text class="sm" x="310" y="680">全矩阵 / target-source 分块</text>
+  <text class="sm" x="98" y="720">因果掩码 · 稳定求和 · compensator · autograd</text>
+  <rect x="575" y="570" width="390" height="190" rx="18" class="gold box" filter="url(#shadow)"/>
+  <text class="h" x="603" y="610">inference</text><text class="t" x="603" y="650">MLE + PyTorch LBFGS</text><text class="sm" x="603" y="684">closure · 参数约束 · 终止原因</text><text class="sm" x="603" y="718">NLL · 梯度范数 · 迭代日志</text>
+  <rect x="1000" y="570" width="330" height="190" rx="18" class="green box" filter="url(#shadow)"/>
+  <text class="h" x="1028" y="610">relations</text><text class="t" x="1028" y="650">事件对触发关系</text><text class="sm" x="1028" y="684">用户指定 pair table</text><text class="sm" x="1028" y="718">分块筛选 probability &gt; 10⁻⁴</text>
+  <rect x="1365" y="570" width="165" height="190" rx="18" class="future box"/>
+  <text class="h" x="1390" y="610">以后</text><text class="sm" x="1390" y="652">多 GPU</text><text class="sm" x="1390" y="682">稀疏近似</text><text class="sm" x="1390" y="712">分布式输出</text>
+
+  <path class="arrow" d="M227 480 L227 562"/><path class="arrow" d="M578 480 C578 520 430 525 430 562"/><path class="arrow" d="M1020 480 C1020 520 500 520 500 562"/>
+  <path class="arrow" d="M540 665 L567 665"/><path class="arrow" d="M965 665 L992 665"/><path class="dash" d="M1330 665 L1357 665"/>
+
+  <text class="lane" x="70" y="825">结果与质量保障</text>
+  <rect x="70" y="850" width="720" height="100" rx="18" class="gray box" filter="url(#shadow)"/>
+  <text class="h" x="98" y="890">FitResult / RunDirectory</text><text class="sm" x="98" y="922">最终参数 · 收敛状态 · optimization.csv · metrics.json · environment · Git SHA · relations.parquet</text>
+  <rect x="830" y="850" width="700" height="100" rx="18" class="gray box" filter="url(#shadow)"/>
+  <text class="h" x="858" y="890">contracts / golden / benchmarks</text><text class="sm" x="858" y="922">shape · dtype · device · 因果 · 梯度 · CPU/CUDA一致性 · 1.2万事件基准</text>
+  <path class="arrow" d="M770 760 L430 842"/><path class="arrow" d="M1165 760 L1165 842"/>
+</svg>

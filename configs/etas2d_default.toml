@@ -1,0 +1,228 @@
+# Default ETAS2D configuration for torchstpp.
+#
+# This file contains user choices and numerical values only. Scientific modules
+# such as ETAS2D, ExactLikelihood, and LegacyEMLBFGS must not open this file
+# themselves. A configuration loader will read the file once, and builder
+# functions will pass each table to the Python object that owns that behavior.
+#
+# Parameter units must be consistent with the processed EventCatalog. In
+# particular, `c` uses the same time unit as `catalog.time`, while `d` is tied to
+# the squared horizontal-distance convention used by the ETAS2D spatial kernel.
+
+[runtime]
+device = "cuda:0"            # PyTorch device used during the initial single-GPU stage.
+dtype = "float32"            # Supported values will initially be float32 and float64.
+
+
+# -----------------------------------------------------------------------------
+# Input catalog, legacy-compatible projection, and observation domain
+#
+# Relative paths are resolved from the directory containing this TOML file.
+# The geographic preset expects: time, longitude, latitude, mag, and optionally
+# depth. Set event_id_column when the input contains an ID that must be retained.
+# Filtering is applied before later modules see the catalog: M >= Mc and
+# time_zero <= time <= time_end.
+# -----------------------------------------------------------------------------
+
+[catalog]
+path = "../data/catalog.csv"  # Replace with the actual CSV/TSV/ETAS/Parquet path.
+columns_preset = "geographic_earthquake"
+completeness_magnitude = 3.5
+time_unit = "day"
+distance_unit = "degree"
+coordinate_system = "EPSG:4326"
+depth_unit = "km"
+depth_positive = "down"
+sort_by_time = true
+
+[catalog.duplicates]
+# Default behavior is deterministic and emits a warning whenever data change.
+# Time ties receive the smallest increment representable by runtime.dtype.
+# Repeated geographic positions use the legacy golden-angle displacement.
+time_policy = "jitter"       # Alternatives: "keep" or "error".
+position_policy = "jitter"   # Alternatives: "keep" or "error".
+position_minimum_separation_m = 0.05
+warn = true
+
+[projection]
+method = "legacy_local_approx"
+source_crs = "EPSG:4326"
+# reference_latitude may be supplied explicitly. If omitted, it is calculated
+# from the polygon centroid, then bbox center, then catalog mean latitude.
+
+[domain]
+time_zero = 0.0              # Earliest event allowed to act as a source.
+time_start = 0.0             # Start of target-event likelihood evaluation.
+time_end = 365.0             # End shared by source history and target window.
+include_start = true
+include_end = true
+# Provide exactly one spatial form. Inline polygon vertices are convenient for
+# small regions; polygon_path accepts JSON vertices or a CSV with x/y columns.
+# polygon = [[100.0, 30.0], [101.0, 30.0], [101.0, 31.0], [100.0, 31.0]]
+bbox = [100.0, 30.0, 101.0, 31.0]
+
+
+# -----------------------------------------------------------------------------
+# ETAS2D model and initial physical parameter values
+#
+# `value` is the initial value in the scientific parameterization, not the
+# unconstrained `raw` value stored internally by ModelParameter.
+# `trainable = false` freezes a parameter while retaining it in the model.
+# Bounds are strict because the internal transforms map raw values into the open
+# interval. Omit `upper_bound` when no upper bound is required.
+# -----------------------------------------------------------------------------
+
+[model]
+type = "etas2d"               # Selects the standard normalized 2-D ETAS implementation.
+
+[model.integration]
+type = "polygon"              # Default finite-polygon triggering-kernel integral.
+subdivisions = 1001
+source_chunk_size = 4096
+
+[model.parameters.mu]
+value = 0.02                  # Global scale multiplying the spatial KDE background density.
+trainable = true
+lower_bound = 0.0             # The global background scale must remain positive.
+
+[model.parameters.amplitude]
+value = 0.15                  # Productivity amplitude A in A * exp(alpha * (M - Mc)).
+trainable = true
+lower_bound = 0.0
+
+[model.parameters.alpha]
+value = 1.0                   # Magnitude-productivity exponent alpha.
+trainable = true
+lower_bound = 0.0
+
+[model.parameters.c]
+value = 0.01                  # Omori time offset; uses the same unit as catalog.time.
+trainable = true
+lower_bound = 0.0
+
+[model.parameters.p]
+value = 1.15                  # Omori decay exponent for the normalized temporal kernel.
+trainable = true
+lower_bound = 1.0             # p > 1 is required for the infinite-time integral to converge.
+
+[model.parameters.d]
+value = 0.5                   # Base spatial scale in the ETAS2D distance-squared kernel.
+trainable = true
+lower_bound = 0.0
+
+[model.parameters.q]
+value = 1.5                   # Spatial decay exponent for the normalized planar kernel.
+trainable = true
+lower_bound = 1.0             # q > 1 is required for normalization over the plane.
+
+[model.parameters.gamma]
+value = 0.8                   # Controls how the spatial scale increases with source magnitude.
+trainable = true
+lower_bound = 0.0
+
+
+# -----------------------------------------------------------------------------
+# Gaussian KDE background component and its initial event state
+#
+# `initial_probability` initializes phi_i, the conditional probability that
+# event i belongs to the background process. It is not the global model
+# parameter `mu`. The KDE density u(x), event background intensity mu*u(x), and
+# later phi updates are computed by the framework from this state.
+#
+# Target and source chunk sizes bound the temporary pairwise matrices used to
+# evaluate the KDE. They affect speed and peak memory but not the KDE formula.
+# -----------------------------------------------------------------------------
+
+[background]
+type = "gaussian_kde"
+target_chunk_size = 4096      # Number of KDE evaluation locations in one target block.
+source_chunk_size = 4096      # Number of KDE centers in one source block.
+
+[background.bandwidth]
+# Legacy/Fortran-compatible adaptive bandwidth: distance to the k-th nearest
+# other event, clamped to `minimum`. Computation is exact but blockwise, so it
+# does not allocate a complete N x N distance matrix.
+method = "knn"
+neighbors = 5
+minimum = 0.05
+target_chunk_size = 2048
+source_chunk_size = 4096
+
+[background.state]
+initial_probability = 1.0     # Legacy initialization: initially treat every event as background.
+duration = "observation"     # Use domain.time_end - domain.time_start for KDE normalization.
+
+[background.integration]
+type = "polygon"              # Integrate KDE mass over the polygon supplied by Domain.
+subdivisions = 1001           # Simpson boundary discretization; an odd value is recommended.
+source_chunk_size = 4096      # Number of KDE centers integrated in one source block.
+
+
+# -----------------------------------------------------------------------------
+# Exact point-process likelihood
+#
+# These blocks partition exact event-pair calculations; they do not introduce a
+# sparse or stochastic approximation. Larger blocks may improve GPU utilization
+# but require more memory for each forward computation.
+#
+# Activation checkpointing discards large block intermediates during the forward
+# pass and recomputes them during backward. It lowers training memory at the cost
+# of extra computation, while preserving the exact likelihood and gradients.
+# -----------------------------------------------------------------------------
+
+[likelihood]
+type = "exact"
+target_chunk_size = 2048      # Target events per exact-likelihood block.
+source_chunk_size = 4096      # Possible triggering sources per likelihood block.
+checkpoint_blocks = false     # Enable for large catalogs after benchmarking block sizes.
+
+
+# -----------------------------------------------------------------------------
+# Legacy-compatible alternating EM--LBFGS inference
+#
+# Each outer iteration first performs one or more E steps. An E step rebuilds the
+# KDE background from current phi values and updates phi_i = background_i /
+# intensity_i without autograd. The resulting background state is then held fixed
+# while PyTorch LBFGS optimizes the continuous ETAS parameters, including mu.
+# -----------------------------------------------------------------------------
+
+[inference]
+type = "legacy_em_lbfgs"
+
+[inference.em]
+outer_iterations = 11        # Maximum number of alternating E-step/LBFGS cycles.
+e_steps_per_outer = 10       # Number of phi/KDE fixed-point updates in the first cycle.
+decrease_e_steps = true       # Reduce this count by one per cycle, never below one.
+
+[inference.lbfgs]
+lr = 0.05                    # LBFGS step-size scale; retained from the legacy PyTorch run.
+max_iter = 20                # Maximum internal LBFGS iterations per outer cycle.
+history_size = 10            # Number of curvature-history pairs retained by LBFGS.
+line_search = "strong_wolfe" # PyTorch line search; the closure may run several times per step.
+
+[inference.convergence]
+# Convergence requires both criteria to be satisfied in the same outer cycle.
+# Background change is max_i |u_new(x_i) - u_old(x_i)| over catalog locations.
+# Parameter change is max_j |theta_new_j - theta_old_j| / (1 + |theta_old_j|)
+# over the physical ETAS parameters returned by model.parameter_values().
+background_tolerance = 1e-5
+parameter_tolerance = 1e-5
+
+
+# -----------------------------------------------------------------------------
+# Persistent outputs and thresholded event-pair relationships
+#
+# The application refuses to write into a non-empty directory. This protects a
+# previous scientific run from accidental partial overwrites.
+# -----------------------------------------------------------------------------
+
+[output]
+enabled = true
+directory = "../output/etas2d_run"
+
+[relations]
+enabled = true
+directory = "relations"
+probability_threshold = 1e-4
+target_chunk_size = 2048
+source_chunk_size = 4096

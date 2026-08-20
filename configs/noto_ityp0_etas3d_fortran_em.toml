@@ -1,0 +1,162 @@
+# Noto point-source ETAS3D using the exact Fortran EM ordering.
+
+[runtime]
+device = "cuda:0"
+dtype = "float64"
+
+[catalog]
+path = "../data/Noto2000-2024_ityp0.etas"
+completeness_magnitude = 2.0
+time_unit = "day"
+distance_unit = "degree"
+coordinate_system = "EPSG:4326"
+depth_unit = "km"
+depth_positive = "down"
+sort_by_time = true
+
+[catalog.columns]
+event_id = "idx"
+x = "longitude"
+y = "latitude"
+magnitude = "mag"
+time = "time"
+depth = "depth"
+inside = "unknown"
+
+[catalog.duplicates]
+time_policy = "jitter"
+position_policy = "jitter"
+position_minimum_separation_m = 0.05
+warn = true
+
+[catalog.depth_filter]
+minimum = 0.0
+maximum = 30.0
+include_minimum = true
+include_maximum = false
+
+[projection]
+method = "legacy_local_approx"
+source_crs = "EPSG:4326"
+
+[domain]
+time_zero = 0.0
+time_start = 3653.0
+time_end = 8948.0
+include_start = true
+include_end = true
+polygon = [
+    [136.2, 36.8],
+    [138.0, 36.8],
+    [138.0, 38.3],
+    [136.2, 38.3],
+]
+
+[model]
+type = "etas3d"
+maximum_depth = 30.0
+depth_boundary_offset = 0.5
+
+[model.integration]
+type = "polygon"
+subdivisions = 1001
+source_chunk_size = 4000
+
+[model.parameters.mu]
+value = 0.068136
+lower_bound = 0.0
+
+[model.parameters.amplitude]
+value = 0.38721
+lower_bound = 0.0
+
+[model.parameters.c]
+value = 0.15163
+lower_bound = 0.0
+
+[model.parameters.alpha]
+value = 1.2628
+lower_bound = 0.0
+
+[model.parameters.p]
+value = 1.2941
+lower_bound = 1.0
+
+[model.parameters.d]
+value = 0.00011933
+lower_bound = 0.0
+
+[model.parameters.q]
+value = 1.9169
+lower_bound = 1.0
+
+[model.parameters.gamma]
+value = 0.47143
+lower_bound = 0.0
+
+[model.parameters.eta]
+value = 201.39
+lower_bound = 0.0
+
+[model.parameters.delta]
+value = 0.50050
+lower_bound = 0.0
+
+[background]
+type = "gaussian_beta_kde"
+depth_concentration = 100.0
+target_chunk_size = 2000
+source_chunk_size = 4000
+
+[background.bandwidth]
+method = "knn"
+neighbors = 3
+minimum = 0.02
+target_chunk_size = 2000
+source_chunk_size = 4000
+
+[background.state]
+initial_probability = 1.0
+duration = "observation"
+
+[background.integration]
+type = "polygon"
+subdivisions = 1001
+source_chunk_size = 4000
+
+[likelihood]
+type = "exact"
+target_chunk_size = 2000
+source_chunk_size = 4000
+checkpoint_blocks = true
+
+[inference]
+type = "fortran_em_lbfgs"
+
+[inference.em]
+# etas8p3d.f: outer iterative=1..11 and inner 1..(12-iterative).
+outer_iterations = 11
+e_steps_per_outer = 11
+decrease_e_steps = true
+
+[inference.lbfgs]
+lr = 0.05
+max_iter = 20
+history_size = 10
+line_search = "strong_wolfe"
+
+[inference.convergence]
+# Diagnostics only: FortranEMLBFGS always completes all 11 outer iterations.
+background_tolerance = 1e-7
+parameter_tolerance = 1e-7
+
+[output]
+enabled = true
+directory = "../output/noto_ityp0_etas3d_fortran_em_run"
+
+[relations]
+enabled = true
+directory = "relations"
+probability_threshold = 1e-4
+target_chunk_size = 2000
+source_chunk_size = 4000

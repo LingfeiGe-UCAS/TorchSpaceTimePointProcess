@@ -1,0 +1,243 @@
+# Point-source ETAS3D configuration template for torchstpp.
+#
+# Settings are ordered in three groups:
+#   1. REQUIRED: the program or scientific model cannot infer them safely.
+#   2. RECOMMENDED: defaults exist, but explicit values improve reproducibility.
+#   3. OPTIONAL: advanced overrides; leave them commented to use defaults.
+#
+# Relative paths are resolved from the directory containing this TOML file.
+
+
+# =============================================================================
+# 1. REQUIRED SETTINGS
+# =============================================================================
+
+[catalog]
+# Input catalog and the magnitude threshold used in ETAS productivity terms.
+path = "../data/catalog_3d.csv"
+completeness_magnitude = 3.5
+
+# Use a preset when the file has time/longitude/latitude/depth/mag columns.
+# Replace this with [catalog.columns] for a non-standard table.
+columns_preset = "geographic_earthquake"
+
+# Units and conventions are treated as required scientific metadata here,
+# even though the loader can technically store them as "unspecified".
+time_unit = "day"
+distance_unit = "degree"
+coordinate_system = "EPSG:4326"
+depth_unit = "km"             # Must match model.maximum_depth.
+depth_positive = "down"       # ETAS3D expects nonnegative positive-down depth.
+
+# Optional keys belonging to [catalog] must remain in this table if enabled.
+# sort_by_time = true           # Default: true; uses a stable time sort.
+
+# For non-standard column names, remove columns_preset above and use:
+# [catalog.columns]
+# event_id = "event_id"
+# time = "time"
+# x = "longitude"
+# y = "latitude"
+# depth = "depth"
+# magnitude = "mag"
+# inside = "inside"
+
+[model]
+type = "etas3d"
+maximum_depth = 40.0           # Full modeled depth interval: [0, 40] km.
+# depth_boundary_offset = 0.5  # Optional; default legacy boundary correction.
+
+# =============================================================================
+# 2. RECOMMENDED EXPLICIT SETTINGS
+# =============================================================================
+# Defaults exist for everything below, but keeping these values visible makes
+# numerical experiments easier to reproduce and compare.
+
+[runtime]
+device = "cuda:0"             # Default: "cpu". Use "cuda:1", etc. as needed.
+dtype = "float32"             # Default: "float32"; alternative: "float64".
+
+[catalog.duplicates]
+# "jitter" deterministically separates finite-precision duplicates and warns.
+# Alternatives are "keep" (preserve ties) and "error" (reject the catalog).
+time_policy = "jitter"
+position_policy = "jitter"
+# position_minimum_separation_m = 0.05  # Default: 0.05 m.
+# warn = true                           # Default: true.
+
+[background]
+# Both background smoothing choices have defaults, but they affect the fitted
+# background field and should therefore be stated in scientific experiments.
+# ETAS3D automatically selects gaussian_beta_kde.
+depth_concentration = 6.0     # Default: 6.0; larger means narrower depth KDE.
+# type = "gaussian_beta_kde"  # Inferred from model.type.
+# target_chunk_size = 4096    # Performance-only; default: 4096.
+# source_chunk_size = 4096    # Performance-only; default: 4096.
+
+[background.bandwidth]
+# Horizontal adaptive KDE bandwidth. kNN is the default method.
+method = "knn"                # Alternatives: "constant" or "external".
+neighbors = 5                 # Default: 5 nearest events.
+minimum = 0.05                # Default: 0.05 in projected distance units.
+# target_chunk_size = 2048    # Performance-only; default: 2048.
+# source_chunk_size = 4096    # Performance-only; default: 4096.
+# value = 0.05                # Required only when method = "constant".
+
+[projection]
+method = "legacy_local_approx"
+# source_crs = "EPSG:4326"    # Default for legacy_local_approx.
+# reference_latitude is inferred from polygon, bbox, then catalog.
+
+[domain]
+# time_zero controls which historical events may trigger target events.
+# time_start/time_end define the likelihood observation window.
+time_zero = 0.0
+time_start = 0.0
+time_end = 365.0
+bbox = [100.0, 30.0, 101.0, 31.0]
+
+# A polygon can replace bbox; never provide both.
+# polygon = [
+#     [100.0, 30.0],
+#     [101.0, 30.0],
+#     [101.0, 31.0],
+#     [100.0, 31.0],
+# ]
+# include_start = true         # Default: true.
+# include_end = true           # Default: true.
+
+[inference]
+# Use "fortran_em_lbfgs" when reproducing the legacy Fortran EM ordering.
+type = "legacy_em_lbfgs"
+
+[inference.em]
+outer_iterations = 11
+e_steps_per_outer = 10
+decrease_e_steps = true
+
+[output]
+# Use a new directory for every experiment. Existing non-empty directories are
+# rejected to protect previous scientific results.
+enabled = true
+directory = "../output/etas3d_run"
+
+
+# =============================================================================
+# 3. OPTIONAL ADVANCED SETTINGS
+# =============================================================================
+# Every line below is commented. Uncomment only the settings being overridden.
+
+# --- Model-parameter initial values, bounds, and transformations -------------
+# All ten parameters already have model defaults and are trainable by default.
+# eta and delta default to the square transform; the other eight parameters use
+# softplus. A parameter table may contain only the fields that need overriding.
+
+# [model.parameters.mu]
+# value = 0.02
+# trainable = true
+# lower_bound = 0.0
+
+# [model.parameters.amplitude]
+# value = 0.15
+# trainable = true
+# lower_bound = 0.0
+
+# [model.parameters.alpha]
+# value = 1.0
+# trainable = true
+# lower_bound = 0.0
+
+# [model.parameters.c]
+# value = 0.01
+# trainable = true
+# lower_bound = 0.0
+
+# [model.parameters.p]
+# value = 1.15
+# trainable = true
+# lower_bound = 1.0
+
+# [model.parameters.d]
+# value = 0.5
+# trainable = true
+# lower_bound = 0.0
+
+# [model.parameters.q]
+# value = 1.5
+# trainable = true
+# lower_bound = 1.0
+
+# [model.parameters.gamma]
+# value = 0.8
+# trainable = true
+# lower_bound = 0.0
+
+# [model.parameters.eta]
+# value = 10.0
+# trainable = true
+# lower_bound = 0.0
+# transform = "square"        # Alternative: "softplus".
+
+# [model.parameters.delta]
+# value = 0.1                  # H = eta * exp[-delta * (M - Mc)].
+# trainable = true
+# lower_bound = 0.0
+# transform = "square"        # Alternative: "softplus".
+
+# --- Triggering-kernel spatial integral --------------------------------------
+# The polygon method is the default. The conditional-Beta depth density is
+# integrated analytically to one over [0, maximum_depth].
+
+# [model.integration]
+# type = "polygon"            # Alternative: "infinite_space".
+# subdivisions = 1001
+# source_chunk_size = 4096
+
+# --- Background KDE state and integral ---------------------------------------
+
+# [background.state]
+# initial_probability = 1.0
+# duration = "observation"    # Alternative: "history" or a positive number.
+
+# [background.integration]
+# type = "polygon"            # Alternative: "infinite_space".
+# subdivisions = 1001
+# source_chunk_size = 4096
+
+# --- Exact likelihood memory/performance controls ----------------------------
+
+# [likelihood]
+# type = "exact"
+# target_chunk_size = 2048
+# source_chunk_size = 4096
+# checkpoint_blocks = false
+
+# --- LBFGS and convergence controls ------------------------------------------
+
+# [inference.lbfgs]
+# lr = 0.05
+# max_iter = 20
+# history_size = 10
+# line_search = "strong_wolfe"  # Use "none" to disable line search.
+
+# [inference.convergence]
+# background_tolerance = 1e-5
+# parameter_tolerance = 1e-5
+
+# --- Optional depth filtering before fitting ---------------------------------
+
+# [catalog.depth_filter]
+# minimum = 0.0
+# maximum = 40.0
+# include_minimum = true
+# include_maximum = true
+
+# --- Event-pair relation output ----------------------------------------------
+# Relations are enabled by default whenever outputs are written.
+
+# [relations]
+# enabled = true
+# directory = "relations"
+# probability_threshold = 1e-4
+# target_chunk_size = 2048
+# source_chunk_size = 4096
