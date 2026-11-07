@@ -16,7 +16,7 @@ class GaussianBetaKDEBackground(GaussianKDEBackground):
         *,
         maximum_depth: float,
         depth_concentration: float,
-        boundary_offset: float = 0.5,
+        boundary_offset: float | None = None,
         target_chunk_size: int = 4096,
         source_chunk_size: int = 4096,
         spatial_integrator: SpatialIntegrator | None = None,
@@ -33,9 +33,12 @@ class GaussianBetaKDEBackground(GaussianKDEBackground):
             raise ValueError("maximum_depth must be positive")
         if depth_concentration <= 0:
             raise ValueError("depth_concentration must be positive")
-        if boundary_offset <= 0 or 2.0 * boundary_offset >= maximum_depth:
+        if boundary_offset is not None and (
+            boundary_offset <= 0 or 2.0 * boundary_offset >= maximum_depth
+        ):
             raise ValueError(
-                "boundary_offset must be positive and smaller than maximum_depth / 2"
+                "boundary_offset must be None or a positive value smaller "
+                "than maximum_depth / 2"
             )
         self.maximum_depth = maximum_depth
         self.depth_concentration = depth_concentration

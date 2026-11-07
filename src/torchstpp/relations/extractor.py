@@ -41,7 +41,7 @@ class RelationExtractor:
             for source_begin in range(0, event_count, self.source_chunk_size):
                 source_end = min(source_begin + self.source_chunk_size, event_count)
                 source = catalog.take(slice(source_begin, source_end))
-                if source.time[0] >= target.time[-1]:
+                if source.time[0] > target.time[-1]:
                     break
 
                 trigger_rate = model.pairwise_rate(target, source)

@@ -63,6 +63,9 @@ bbox = [100.0, 30.0, 101.0, 31.0]
 [model]
 type = "etas2d"
 
+[model.spatial_resolution]
+minimum_distance_m = 10.0
+
 [model.parameters.alpha]
 value = 1.25
 
@@ -113,6 +116,10 @@ parameter_tolerance = 0.002
     assert project.transformer is not None
     assert project.transformer.method == "legacy_local_approx"
     assert torch.allclose(project.model.alpha, torch.tensor(1.25, dtype=torch.float64))
+    expected_floor = torch.tensor(
+        (10.0 / 111_320.0) ** 2, dtype=torch.float64
+    )
+    assert torch.allclose(project.model.minimum_spatial_scale, expected_floor)
     assert project.likelihood.target_chunk_size == 2
     assert project.inference.config.outer_iterations == 4
     assert project.inference.config.line_search_fn is None

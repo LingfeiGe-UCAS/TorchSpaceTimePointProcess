@@ -71,17 +71,38 @@ def parameters_3d():
     )
 
 
-def test_depth_parameters_use_softplus_transform_by_default():
+def test_depth_parameters_use_square_transform_by_default():
     model = ETAS3D(
         parameters_3d(),
         maximum_depth=40.0,
         background_depth_concentration=6.0,
     )
 
-    assert model.eta_parameter.transform == "softplus"
-    assert model.delta_parameter.transform == "softplus"
+    assert model.eta_parameter.transform == "square"
+    assert model.delta_parameter.transform == "square"
+    assert torch.isclose(model.eta_parameter.raw, torch.sqrt(torch.tensor(8.0)))
+    assert torch.isclose(model.delta_parameter.raw, torch.sqrt(torch.tensor(0.2)))
     assert torch.isclose(model.eta, torch.tensor(8.0))
     assert torch.isclose(model.delta, torch.tensor(0.2))
+
+
+def test_etas3d_inherits_optional_minimum_spatial_scale():
+    model = ETAS3D(
+        parameters_3d(),
+        maximum_depth=40.0,
+        background_depth_concentration=6.0,
+        minimum_spatial_scale=0.04,
+    )
+    source = Catalog3DStub(
+        time=torch.tensor([0.0]),
+        position=torch.tensor([[0.0, 0.0]]),
+        depth=torch.tensor([10.0]),
+        magnitude=torch.tensor([3.0]),
+        completeness_magnitude=3.0,
+    )
+
+    assert torch.isclose(model.minimum_spatial_scale, torch.tensor(0.04))
+    assert torch.isclose(model.spatial_scale(source)[0], torch.tensor(0.34))
 
 
 def test_depth_parameter_transform_can_be_overridden():
@@ -236,6 +257,38 @@ def test_depth_density_matches_fortran_formula_and_boundary_correction():
         + torch.lgamma(a + b) - torch.lgamma(a) - torch.lgamma(b)
     ) / 40.0
     assert torch.allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_depth_density_retains_exact_endpoints_for_fortran_background():
+    dtype = torch.float64
+    target = torch.tensor([[0.0], [40.0]], dtype=dtype)
+    source = torch.tensor([[0.0, 20.0, 40.0]], dtype=dtype)
+    concentration = torch.full((1, 3), 6.0, dtype=dtype)
+
+    actual = conditional_beta_depth_density(
+        target,
+        source,
+        40.0,
+        concentration,
+        boundary_offset=None,
+    )
+    expected = torch.tensor(
+        [[7.0 / 40.0, 0.0, 0.0], [0.0, 0.0, 7.0 / 40.0]],
+        dtype=dtype,
+    )
+
+    assert torch.all(torch.isfinite(actual))
+    assert torch.allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_background_defaults_to_raw_depth_endpoints():
+    background = GaussianBetaKDEBackground(
+        maximum_depth=40.0,
+        depth_concentration=6.0,
+        spatial_integrator=InfiniteSpaceIntegrator(),
+    )
+
+    assert background.boundary_offset is None
 
 
 def test_depth_density_integrates_to_one():

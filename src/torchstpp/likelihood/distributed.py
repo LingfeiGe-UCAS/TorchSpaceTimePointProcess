@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 import hashlib
 from typing import Any
@@ -235,6 +235,7 @@ class DistributedExactLikelihood(nn.Module):
                     (
                         "event_id", "time", "position", "magnitude",
                         "completeness_magnitude", "depth", "inside",
+                        "finite_source_id",
                     ),
                 ),
                 (
@@ -431,8 +432,11 @@ class DistributedExactLikelihood(nn.Module):
             triggering_compensator=global_triggering,
             target_count=int(count.item()),
         )
-        backward_loss = local.negative_log_likelihood + (
-            global_nll - local.negative_log_likelihood.detach()
+        # Subtract identical local values first. The former local+(global-local)
+        # ordering rounded differently on each rank, even for float64. Preserve
+        # the local graph while returning the exact same global scalar value.
+        backward_loss = global_nll + (
+            local.negative_log_likelihood - local.negative_log_likelihood.detach()
         )
         return DistributedLikelihoodTerms(
             backward_loss=backward_loss,
@@ -470,6 +474,100 @@ class DistributedExactLikelihood(nn.Module):
         background_state: Any,
     ) -> torch.Tensor:
         return self.terms(model, catalog, domain, background_state).backward_loss
+
+    def run_lbfgs_step_(
+        self,
+        optimizer: torch.optim.LBFGS,
+        model: nn.Module,
+        closure: Callable[[], torch.Tensor],
+    ) -> tuple[int, int]:
+        """Run one M step under a single rank's line-search control.
+
+        Group rank zero owns the optimizer and its retained curvature history.
+        Other ranks only evaluate explicitly requested trial parameters. Each
+        closure must compute its local graph and collectively sum gradients;
+        collectives inside it must already synchronize their own error paths.
+        Return the leader's iteration/evaluation counts on every rank.
+        """
+        reference = optimizer.param_groups[0]["params"][0]
+
+        def counters() -> tuple[int, int]:
+            state = optimizer.state.get(reference, {})
+            return int(state.get("n_iter", 0)), int(state.get("func_evals", 0))
+
+        if not self._distributed:
+            before = counters()
+            optimizer.step(closure)
+            after = counters()
+            return after[0] - before[0], after[1] - before[1]
+
+        evaluate_command, done_command, error_command = 0, 1, 2
+        source = self._global_source_rank()
+        command = torch.zeros((), dtype=torch.int64, device=reference.device)
+
+        def exchange_command(value: int | None = None) -> int:
+            if self.is_main_process:
+                assert value is not None
+                command.fill_(value)
+            dist.broadcast(command, src=source, group=self.process_group)
+            return int(command.item())
+
+        def evaluate_trial() -> torch.Tensor:
+            # L-BFGS can restore/retry a point during strong-Wolfe search. Send
+            # the actual trial parameters, not an independently computed step.
+            self.broadcast_parameters_(model)
+            value = None
+            error: Exception | None = None
+            try:
+                with torch.enable_grad():
+                    value = closure()
+            except Exception as caught:
+                error = caught
+            self.synchronize_failure(error, reference, stage="coordinated LBFGS closure")
+            assert value is not None
+            return value
+
+        counts = torch.zeros(2, dtype=torch.int64, device=reference.device)
+        pending_error: Exception | None = None
+        if self.is_main_process:
+            def leader_closure() -> torch.Tensor:
+                exchange_command(evaluate_command)
+                return evaluate_trial()
+
+            try:
+                before = counters()
+                optimizer.step(leader_closure)
+                after = counters()
+                counts[0] = after[0] - before[0]
+                counts[1] = after[1] - before[1]
+            except Exception as error:
+                # Workers are waiting for a command after a successful closure
+                # or a collectively reported closure failure. Release both.
+                exchange_command(error_command)
+                raise RuntimeError(f"rank-zero LBFGS failed: {error}") from error
+            exchange_command(done_command)
+        else:
+            while True:
+                action = exchange_command()
+                if action == evaluate_command:
+                    try:
+                        evaluate_trial()
+                    except Exception as error:
+                        # Do not leave the protocol before the leader sends
+                        # ERROR, or an outer error all-reduce could mismatch it.
+                        pending_error = error
+                elif action == done_command:
+                    break
+                elif action == error_command:
+                    raise RuntimeError("rank-zero LBFGS failed") from pending_error
+                else:
+                    raise RuntimeError(f"unknown LBFGS command {action}")
+
+        self.synchronize_failure(pending_error, reference, stage="coordinated LBFGS completion")
+        # The accepted point may differ from the last trial evaluated.
+        self.broadcast_parameters_(model)
+        dist.broadcast(counts, src=source, group=self.process_group)
+        return int(counts[0].item()), int(counts[1].item())
 
     @torch.no_grad()
     def sum_gradients_(
@@ -585,17 +683,17 @@ class DistributedExactLikelihood(nn.Module):
         if self._distributed:
             dist.all_reduce(value, op=dist.ReduceOp.SUM, group=self.process_group)
 
-    def local_target_ranges(
+    def local_target_schedule(
         self,
         target_time: torch.Tensor,
         source_time: torch.Tensor,
         *,
         background_source_count: int,
-    ) -> tuple[tuple[int, int], ...]:
-        """Return this rank's target ranges using the active parallel schedule."""
+    ) -> tuple[tuple[tuple[int, int], ...], int, int]:
+        """Return local ranges and compute tiles without changing fit diagnostics."""
 
         if self.pair_budget is None:
-            return tuple(
+            ranges = tuple(
                 block_cyclic_ranges(
                     int(target_time.numel()),
                     self.target_chunk_size,
@@ -603,6 +701,7 @@ class DistributedExactLikelihood(nn.Module):
                     world_size=self.world_size,
                 )
             )
+            return ranges, self.target_chunk_size, self.source_chunk_size
         plan = build_pair_budget_plan(
             target_time,
             source_time,
@@ -613,10 +712,32 @@ class DistributedExactLikelihood(nn.Module):
             source_alignment=self.source_alignment,
         )
         begin, end = plan.target_range(self.rank)
-        return tuple(
+        ranges = tuple(
             (block_begin, min(block_begin + plan.target_chunk_size, end))
             for block_begin in range(begin, end, plan.target_chunk_size)
         )
+        return ranges, plan.target_chunk_size, plan.source_chunk_size
+
+    def prepare_m_step(self, model, catalog, domain, background_state):
+        """Prepare only this rank's fixed background values for the M step."""
+        from .prepared_background import prepare_m_step
+        return prepare_m_step(self, model, catalog, domain, background_state)
+
+    def local_target_ranges(
+        self,
+        target_time: torch.Tensor,
+        source_time: torch.Tensor,
+        *,
+        background_source_count: int,
+    ) -> tuple[tuple[int, int], ...]:
+        """Return this rank's target ranges using the active parallel schedule."""
+
+        ranges, _, _ = self.local_target_schedule(
+            target_time,
+            source_time,
+            background_source_count=background_source_count,
+        )
+        return ranges
 
     def barrier(self) -> None:
         if self._distributed:

@@ -6,7 +6,9 @@ ETAS models.
 
 ## Current capabilities
 
-- Exact ETAS2D and depth-aware ETAS3D likelihoods.
+- Exact ETAS2D, depth-aware ETAS3D, and three-dimensional finite-source ETAS likelihoods.
+- Finite-source patch updates with blocked or FFT-based smoothing.
+- Patch-level activation checkpointing and reusable background calculations.
 - Differentiable temporal, spatial, depth, and background components.
 - EM and L-BFGS inference compatible with the legacy Fortran workflow.
 - Chunked and checkpointed event-pair computation.

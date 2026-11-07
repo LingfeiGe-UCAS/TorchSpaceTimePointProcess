@@ -36,7 +36,7 @@ def run_etas(
     total_started = time.perf_counter()
     loaded = load_config(config) if not isinstance(config, TorchSTPPConfig) else config
     model_type = str(loaded.section("model").get("type", "etas2d")).lower()
-    if model_type not in {"etas2d", "etas3d"} and (
+    if model_type not in {"etas2d", "etas3d", "finite_source_etas3d"} and (
         model_factories is None or model_type not in model_factories
     ):
         raise ValueError(f"run_etas does not support model.type = {model_type!r}")
@@ -61,12 +61,7 @@ def run_etas(
     relation_manifest: dict[str, Any] | None = None
     if output_directory is not None:
         writer = ResultWriter(output_directory)
-        paths = {
-            "parameters": writer.write_parameters(run),
-            "history": writer.write_history(run),
-            "events": writer.write_events(run),
-            "checkpoint": writer.write_checkpoint(run),
-        }
+        paths = writer.write_all(run)
         relation = loaded.section("relations")
         if bool(relation.get("enabled", True)):
             extractor = RelationExtractor(
@@ -86,6 +81,7 @@ def run_etas(
         run.elapsed_seconds = time.perf_counter() - total_started
         if cuda_run:
             run.peak_memory_bytes = torch.cuda.max_memory_allocated()
+        # Refresh summary after total runtime and peak memory are finalized.
         paths["summary"] = writer.write_summary(run)
     else:
         run.elapsed_seconds = time.perf_counter() - total_started

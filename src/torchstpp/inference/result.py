@@ -14,6 +14,10 @@ class OptimizationStep:
     background_change: float
     parameter_change: float
     parameter_values: dict[str, float]
+    m_step_max_iter: int | None = None
+    m_step_max_eval: int | None = None
+    m_step_iterations: int | None = None
+    m_step_function_evaluations: int | None = None
 
 
 @dataclass(frozen=True)

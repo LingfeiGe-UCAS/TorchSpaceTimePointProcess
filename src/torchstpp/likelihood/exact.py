@@ -24,8 +24,17 @@ class ExactLikelihood(nn.Module):
         self.source_chunk_size = source_chunk_size
         self.checkpoint_blocks = checkpoint_blocks
 
+    def prepare_m_step(self, model, catalog, domain, background_state):
+        """Reuse fixed background density/integral within one optimizer step."""
+        from .prepared_background import prepare_m_step
+        return prepare_m_step(self, model, catalog, domain, background_state)
+
     def _run_block(self, model: Any, function) -> torch.Tensor:
         """Optionally recompute a block during backward to reduce memory."""
+        # Models opting into fine-grained recomputation own both their point
+        # and patch branches. Do not nest a coarse event checkpoint around them.
+        if getattr(model, "checkpoint_patches", False):
+            return function()
         if not self.checkpoint_blocks or not torch.is_grad_enabled():
             return function()
 
@@ -94,7 +103,9 @@ class ExactLikelihood(nn.Module):
             )
 
     def select_targets(self, catalog: Any, domain: Any) -> Any:
-        mask = domain.target_mask(catalog)
+        # Prepared M-step views preserve row indexing; domain validation still
+        # receives the original catalog type (including strict EventCatalogs).
+        mask = domain.target_mask(getattr(catalog, "_catalog", catalog))
         if mask.shape != catalog.time.shape or mask.dtype != torch.bool:
             raise ValueError("domain.target_mask(catalog) must return bool Tensor [N]")
         if not bool(torch.any(mask)):
@@ -102,12 +113,14 @@ class ExactLikelihood(nn.Module):
         return catalog.take(mask)
 
     def select_sources(self, catalog: Any, domain: Any) -> Any:
-        mask = domain.source_mask(catalog)
+        mask = domain.source_mask(getattr(catalog, "_catalog", catalog))
         if mask.shape != catalog.time.shape or mask.dtype != torch.bool:
             raise ValueError("domain.source_mask(catalog) must return bool Tensor [N]")
         if not bool(torch.any(mask)):
             raise ValueError("the source-history window contains no events")
-        return catalog.take(mask)
+        # Source kernels/integrators may inspect concrete catalog fields. Only
+        # targets need cached background values; sources retain their real type.
+        return getattr(catalog, "_catalog", catalog).take(mask)
 
     @staticmethod
     def _block(data: Any, begin: int, end: int) -> Any:
@@ -128,9 +141,9 @@ class ExactLikelihood(nn.Module):
         for target_begin in range(0, target_count, self.target_chunk_size):
             target_end = min(target_begin + self.target_chunk_size, target_count)
             target_block = self._block(targets, target_begin, target_end)
-            background_values = model.background.evaluate(
-                target_block, background_state
-            )
+            background_values = getattr(target_block, "_m_step_background_values", None)
+            if background_values is None:
+                background_values = model.background.evaluate(target_block, background_state)
             intensity = model.background_rate(background_values)
 
             for source_begin in range(0, source_count, self.source_chunk_size):
@@ -138,7 +151,7 @@ class ExactLikelihood(nn.Module):
                 source_block = self._block(sources, source_begin, source_end)
 
                 # Sorted times let us skip this and every later source block.
-                if source_block.time[0] >= target_block.time[-1]:
+                if source_block.time[0] > target_block.time[-1]:
                     break
                 pairwise_sum = self._run_block(
                     model,
@@ -175,7 +188,9 @@ class ExactLikelihood(nn.Module):
     ) -> torch.Tensor:
         """Return the complete background compensator."""
 
-        background_mass = model.background.integrate(background_state, domain)
+        background_mass = getattr(background_state, "_m_step_background_integral", None)
+        if background_mass is None:
+            background_mass = model.background.integrate(background_state, domain)
         return model.integrated_background(background_mass)
 
     def triggering_compensator(

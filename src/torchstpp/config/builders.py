@@ -19,6 +19,10 @@ from ..data import (
     knn_bandwidth,
     resolve_domain,
 )
+from ..finite_source import (
+    FiniteSourceGeometry,
+    load_legacy_finite_source_geometry,
+)
 from ..inference import (
     AdaptiveReferenceInference,
     FortranEMLBFGS,
@@ -35,7 +39,14 @@ from ..models.backgrounds import (
     GaussianKDEBackground,
     KDEState,
 )
-from ..models.etas import ETAS2D, ETAS2DParameters, ETAS3D, ETAS3DParameters
+from ..models.etas import (
+    ETAS2D,
+    ETAS2DParameters,
+    ETAS3D,
+    ETAS3DParameters,
+    FiniteSourceETAS3D,
+    FiniteSourceETAS3DParameters,
+)
 from ..models.parameters import ParameterConfig
 from ..results import FittedRun, compute_event_state
 from .loader import TorchSTPPConfig, load_config
@@ -173,7 +184,7 @@ def build_project(
             position_minimum_separation_m=duplicate_config.get(
                 "position_minimum_separation_m", 0.05
             ),
-            depth_policy=duplicate_config.get("depth_policy", "jitter"),
+            depth_policy=duplicate_config.get("depth_policy", "keep"),
             depth_minimum_separation=duplicate_config.get(
                 "depth_minimum_separation", 0.05
             ),
@@ -192,8 +203,20 @@ def build_project(
     transformer = build_transformer(
         loaded, catalog, polygon=raw_polygon, bbox=raw_bbox
     )
+    finite_source_geometry = build_finite_source_geometry(
+        loaded,
+        dtype=dtype,
+    )
     if transformer is not None:
         catalog = transformer.forward_catalog(catalog)
+        if finite_source_geometry is not None:
+            finite_source_geometry = finite_source_geometry.with_position(
+                transformer.forward(finite_source_geometry.position),
+                coordinate_kind="projected",
+                coordinate_system=transformer.target_crs,
+                distance_unit=transformer.target_distance_unit,
+                projection=transformer.metadata(),
+            )
         raw_polygon = _forward_vertices(transformer, raw_polygon, catalog)
         raw_bbox = _forward_bbox(transformer, raw_bbox, catalog)
 
@@ -213,7 +236,11 @@ def build_project(
     model = build_model(
         loaded,
         background=background,
+        finite_source_geometry=finite_source_geometry,
         model_factories=model_factories,
+        coordinate_distance_unit=str(
+            catalog.metadata.get("distance_unit", "unspecified")
+        ),
     )
     _validate_catalog_for_model(catalog, model)
     likelihood = build_likelihood(loaded)
@@ -315,7 +342,7 @@ def build_catalog(
         duplicates.get("position_minimum_separation_m", 0.05),
     )
     options.setdefault(
-        "depth_duplicate_policy", duplicates.get("depth_policy", "jitter")
+        "depth_duplicate_policy", duplicates.get("depth_policy", "keep")
     )
     options.setdefault(
         "depth_minimum_separation",
@@ -385,7 +412,11 @@ def build_transformer(
 def build_background(config: TorchSTPPConfig) -> BackgroundModel:
     section = config.section("background")
     model_type = str(config.section("model").get("type", "etas2d")).lower()
-    default_type = "gaussian_beta_kde" if model_type == "etas3d" else "gaussian_kde"
+    default_type = (
+        "gaussian_beta_kde"
+        if model_type in {"etas3d", "finite_source_etas3d"}
+        else "gaussian_kde"
+    )
     background_type = str(section.get("type", default_type)).lower()
     integration = section.get("integration", {})
     integrator = _build_integrator(integration, default_source_chunk=4096)
@@ -411,7 +442,9 @@ def build_model(
     config: TorchSTPPConfig,
     *,
     background: Any,
+    finite_source_geometry: FiniteSourceGeometry | None = None,
     model_factories: Mapping[str, ModelFactory] | None = None,
+    coordinate_distance_unit: str | None = None,
 ) -> torch.nn.Module:
     section = config.section("model")
     model_type = str(section.get("type", "etas2d")).lower()
@@ -421,6 +454,7 @@ def build_model(
     parameter_types = {
         "etas2d": ETAS2DParameters,
         "etas3d": ETAS3DParameters,
+        "finite_source_etas3d": FiniteSourceETAS3DParameters,
     }
     if model_type not in parameter_types:
         raise ValueError(
@@ -436,22 +470,134 @@ def build_model(
     integration = section.get("integration", {})
     integrator = _build_integrator(integration, default_source_chunk=4096)
     parameters = parameter_type(**values)
+    minimum_spatial_scale = _minimum_spatial_scale(
+        section,
+        coordinate_distance_unit=coordinate_distance_unit,
+    )
     if model_type == "etas2d":
         return ETAS2D(
             parameters,
             background=background,
             spatial_integrator=integrator,
+            minimum_spatial_scale=minimum_spatial_scale,
         )
     maximum_depth, boundary_offset = _etas3d_depth_settings(config)
-    return ETAS3D(
-        parameters,
-        maximum_depth=maximum_depth,
-        depth_boundary_offset=boundary_offset,
-        depth_reference_magnitude_offset=float(
+    common_3d = {
+        "maximum_depth": maximum_depth,
+        "depth_boundary_offset": boundary_offset,
+        "depth_reference_magnitude_offset": float(
             section.get("depth_reference_magnitude_offset", 0.0)
         ),
-        background=background,
-        spatial_integrator=integrator,
+        "background": background,
+        "spatial_integrator": integrator,
+        "minimum_spatial_scale": minimum_spatial_scale,
+    }
+    if model_type == "etas3d":
+        return ETAS3D(parameters, **common_3d)
+    if finite_source_geometry is None:
+        raise ValueError(
+            "model.type='finite_source_etas3d' requires a [finite_source] table"
+        )
+    finite = config.section("finite_source", required=True)
+    return FiniteSourceETAS3D(
+        parameters,
+        finite_source_geometry=finite_source_geometry,
+        patch_chunk_size=int(finite.get("patch_chunk_size", 4096)),
+        checkpoint_patches=bool(finite.get("checkpoint_patches", False)),
+        horizontal_smoothing_bandwidth=float(
+            finite.get("horizontal_smoothing_bandwidth", 0.015)
+        ),
+        depth_smoothing_concentration=float(
+            finite.get("depth_smoothing_concentration", 100.0)
+        ),
+        tau_normalization=str(finite.get("tau_normalization", "fortran")),
+        smoothing_method=str(finite.get("smoothing_method", "blocked")),
+        zero_responsibility_policy=str(
+            finite.get("zero_responsibility_policy", "retain")
+        ),
+        **common_3d,
+    )
+
+
+def _minimum_spatial_scale(
+    model_section: Mapping[str, Any],
+    *,
+    coordinate_distance_unit: str | None,
+) -> float:
+    """Convert an optional physical distance floor to squared model units."""
+
+    resolution = model_section.get("spatial_resolution", {})
+    if not isinstance(resolution, Mapping):
+        raise TypeError("model.spatial_resolution must be a TOML table")
+    if "minimum_distance_m" not in resolution:
+        return 0.0
+    distance_m = float(resolution["minimum_distance_m"])
+    if not math.isfinite(distance_m) or distance_m < 0.0:
+        raise ValueError(
+            "model.spatial_resolution.minimum_distance_m must be finite "
+            "and non-negative"
+        )
+    if distance_m == 0.0:
+        return 0.0
+
+    unit = str(coordinate_distance_unit or "unspecified").strip().lower()
+    if unit in {"m", "metre", "metres", "meter", "meters"}:
+        coordinate_distance = distance_m
+    elif unit in {"km", "kilometre", "kilometres", "kilometer", "kilometers"}:
+        coordinate_distance = distance_m / 1000.0
+    elif unit == "scaled_degree":
+        coordinate_distance = distance_m / 111_320.0
+    else:
+        raise ValueError(
+            "minimum_distance_m requires projected catalog distance units of "
+            "m, km, or scaled_degree; got "
+            f"{coordinate_distance_unit!r}"
+        )
+    return coordinate_distance * coordinate_distance
+
+
+def build_finite_source_geometry(
+    config: TorchSTPPConfig,
+    *,
+    dtype: torch.dtype,
+) -> FiniteSourceGeometry | None:
+    """Load legacy finite-source patches when the selected model needs them."""
+
+    model_type = str(config.section("model").get("type", "etas2d")).lower()
+    finite = config.section("finite_source")
+    if model_type != "finite_source_etas3d":
+        if finite:
+            raise ValueError(
+                "[finite_source] is only valid with "
+                "model.type='finite_source_etas3d'"
+            )
+        return None
+    if "path" not in finite:
+        raise ValueError("[finite_source].path is required")
+    expected_columns = [
+        "patch_id",
+        "longitude",
+        "latitude",
+        "depth",
+        "finite_source_id",
+    ]
+    columns = finite.get("column_names")
+    if columns is not None and list(columns) != expected_columns:
+        raise ValueError(
+            "finite_source.column_names must describe the legacy five-column "
+            f"layout {expected_columns!r}"
+        )
+    catalog = config.section("catalog")
+    return load_legacy_finite_source_geometry(
+        config.resolve_path(finite["path"]),
+        dtype=dtype,
+        device="cpu",
+        distance_unit=str(catalog.get("distance_unit", "degree")),
+        coordinate_system=str(
+            catalog.get("coordinate_system", "EPSG:4326")
+        ),
+        depth_unit=str(catalog.get("depth_unit", "km")),
+        depth_positive=str(catalog.get("depth_positive", "down")),
     )
 
 
@@ -483,6 +629,34 @@ def build_inference(
     line_search = lbfgs.get("line_search", "strong_wolfe")
     if line_search == "none":
         line_search = None
+    raw_max_iter_schedule = lbfgs.get("max_iter_schedule")
+    if raw_max_iter_schedule is not None and not isinstance(
+        raw_max_iter_schedule, list
+    ):
+        raise TypeError("inference.lbfgs.max_iter_schedule must be a TOML array")
+    raw_max_eval_schedule = lbfgs.get("max_eval_schedule")
+    if raw_max_eval_schedule is not None and not isinstance(
+        raw_max_eval_schedule, list
+    ):
+        raise TypeError("inference.lbfgs.max_eval_schedule must be a TOML array")
+    new_retain_history = lbfgs.get("retain_history_across_outer_iterations")
+    old_retain_history = lbfgs.get("retain_history_across_e_steps")
+    if (
+        new_retain_history is not None
+        and old_retain_history is not None
+        and bool(new_retain_history) != bool(old_retain_history)
+    ):
+        raise ValueError(
+            "retain_history_across_outer_iterations and the deprecated "
+            "retain_history_across_e_steps setting disagree"
+        )
+    retain_history = bool(
+        new_retain_history
+        if new_retain_history is not None
+        else old_retain_history
+        if old_retain_history is not None
+        else False
+    )
     fitter_type = (
         FortranEMLBFGS
         if inference_type == "fortran_em_lbfgs"
@@ -501,11 +675,29 @@ def build_inference(
         ),
         lbfgs_lr=float(lbfgs.get("lr", 0.05)),
         lbfgs_max_iter=int(lbfgs.get("max_iter", 20)),
+        lbfgs_max_iter_schedule=(
+            None
+            if raw_max_iter_schedule is None
+            else tuple(int(value) for value in raw_max_iter_schedule)
+        ),
+        lbfgs_max_eval=(
+            None if lbfgs.get("max_eval") is None else int(lbfgs["max_eval"])
+        ),
+        lbfgs_max_eval_schedule=(
+            None
+            if raw_max_eval_schedule is None
+            else tuple(int(value) for value in raw_max_eval_schedule)
+        ),
         lbfgs_history_size=int(lbfgs.get("history_size", 10)),
+        retain_lbfgs_history_across_outer_iterations=retain_history,
+        retain_history_across_e_steps=(
+            None if old_retain_history is None else bool(old_retain_history)
+        ),
         line_search_fn=line_search,
         target_chunk_size=likelihood.target_chunk_size,
         source_chunk_size=likelihood.source_chunk_size,
         print_parameters=bool(monitor.get("print_parameters", False)),
+        print_every=int(monitor.get("print_every", 1)),
         stop_on_degenerate=bool(monitor.get("stop_on_degenerate", False)),
         boundary_tolerance=float(monitor.get("boundary_tolerance", 1e-10)),
         maximum_absolute_value=float(monitor.get("maximum_absolute_value", 1e6)),
@@ -588,6 +780,14 @@ def _validate_catalog_for_model(catalog: EventCatalog, model: torch.nn.Module) -
             "the selected 3-D model expects positive-down depth; convert the catalog or set "
             "catalog.depth_positive = 'down'"
         )
+    if isinstance(model, FiniteSourceETAS3D):
+        if catalog.finite_source_id is None:
+            raise ValueError(
+                "finite_source_etas3d requires catalog.columns.finite_source_id"
+            )
+        # This validates uniqueness and that every positive catalog ID has a
+        # matching patch group before any expensive likelihood work begins.
+        model.finite_source_parent_indices(catalog)
 
 
 def _filter_catalog_depth(

@@ -64,6 +64,53 @@ class ResultWriter:
                     run.model, "depth_reference_selection", None
                 ),
             }
+        if hasattr(run.model, "minimum_spatial_scale"):
+            configured_resolution = (
+                run.config.get("model", {}).get("spatial_resolution", {})
+            )
+            minimum_scale = float(
+                run.model.minimum_spatial_scale.detach().item()
+            )
+            summary["spatial_resolution"] = {
+                "minimum_distance_m": float(
+                    configured_resolution.get("minimum_distance_m", 0.0)
+                ),
+                "coordinate_distance_unit": getattr(
+                    run.catalog, "metadata", {}
+                ).get("distance_unit"),
+                "minimum_scale_model_units_squared": minimum_scale,
+                "free_d": float(run.model.d.detach().item()),
+                "scale_at_completeness": float(
+                    (run.model.minimum_spatial_scale + run.model.d)
+                    .detach()
+                    .item()
+                ),
+            }
+        if hasattr(run.model, "patch_tau"):
+            summary["finite_source"] = {
+                "patch_count": int(run.model.patch_tau.numel()),
+                "group_count": int(
+                    run.model.finite_source_group_ids.numel()
+                ),
+                "group_ids": _cpu_value(
+                    run.model.finite_source_group_ids
+                ).tolist(),
+                "tau_normalization": run.model.tau_normalization,
+                "smoothing_method": getattr(run.model, "smoothing_method", "blocked"),
+                "zero_responsibility_policy": (
+                    run.model.zero_responsibility_policy
+                ),
+                "patch_chunk_size": run.model.patch_chunk_size,
+                "horizontal_smoothing_bandwidth": (
+                    run.model.horizontal_smoothing_bandwidth
+                ),
+                "depth_smoothing_concentration": (
+                    run.model.depth_smoothing_concentration
+                ),
+                "geometry_metadata": dict(
+                    getattr(run.model, "finite_source_metadata", {})
+                ),
+            }
         path = self.output_directory / "summary.json"
         path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         return path
@@ -98,7 +145,9 @@ class ResultWriter:
         with path.open("w", newline="", encoding="utf-8") as file:
             fieldnames = [
                 "iteration", "negative_log_likelihood",
-                "background_change", "parameter_change", *names,
+                "background_change", "parameter_change",
+                "m_step_max_iter", "m_step_max_eval", "m_step_iterations",
+                "m_step_function_evaluations", *names,
             ]
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
@@ -108,6 +157,12 @@ class ResultWriter:
                     "negative_log_likelihood": step.negative_log_likelihood,
                     "background_change": step.background_change,
                     "parameter_change": step.parameter_change,
+                    "m_step_max_iter": step.m_step_max_iter,
+                    "m_step_max_eval": step.m_step_max_eval,
+                    "m_step_iterations": step.m_step_iterations,
+                    "m_step_function_evaluations": (
+                        step.m_step_function_evaluations
+                    ),
                     **step.parameter_values,
                 })
         return path
@@ -128,7 +183,41 @@ class ResultWriter:
         depth = getattr(catalog, "depth", None)
         if depth is not None:
             data["depth"] = _cpu_value(depth)
+        finite_source_id = getattr(catalog, "finite_source_id", None)
+        if finite_source_id is not None:
+            data["finite_source_id"] = _cpu_value(finite_source_id)
         path = self.output_directory / "events.parquet"
+        pl.DataFrame(data).write_parquet(path, compression="zstd")
+        return path
+
+    def write_subsources(self, run: FittedRun) -> Path | None:
+        """Write fitted finite-source patch state, if present."""
+
+        model = run.model
+        required = (
+            "patch_id",
+            "patch_finite_source_id",
+            "patch_position",
+            "patch_depth",
+            "patch_tau",
+            "normalized_patch_tau",
+            "patch_smoothing_normalizer",
+        )
+        if not all(hasattr(model, name) for name in required):
+            return None
+        data = {
+            "patch_id": _cpu_value(model.patch_id),
+            "finite_source_id": _cpu_value(model.patch_finite_source_id),
+            "x": _cpu_value(model.patch_position[:, 0]),
+            "y": _cpu_value(model.patch_position[:, 1]),
+            "depth": _cpu_value(model.patch_depth),
+            "tau": _cpu_value(model.patch_tau),
+            "normalized_tau": _cpu_value(model.normalized_patch_tau),
+            "smoothing_normalizer": _cpu_value(
+                model.patch_smoothing_normalizer
+            ),
+        }
+        path = self.output_directory / "subsources.parquet"
         pl.DataFrame(data).write_parquet(path, compression="zstd")
         return path
 
@@ -188,10 +277,14 @@ class ResultWriter:
         return path
 
     def write_all(self, run: FittedRun) -> dict[str, Path]:
-        return {
+        paths = {
             "summary": self.write_summary(run),
             "parameters": self.write_parameters(run),
             "history": self.write_history(run),
             "events": self.write_events(run),
             "checkpoint": self.write_checkpoint(run),
         }
+        subsources = self.write_subsources(run)
+        if subsources is not None:
+            paths["subsources"] = subsources
+        return paths

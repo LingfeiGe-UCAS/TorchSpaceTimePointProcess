@@ -19,9 +19,10 @@ from ..data import EventCatalog
 class CatalogColumns:
     """Map canonical catalog fields to columns in an input table.
 
-    ``event_id``, ``depth``, and ``inside`` are optional.  If the event-ID
-    column is absent, zero-based input row numbers are generated before the
-    stable time sort.  Missing depth and region-mask columns become ``None``.
+    ``event_id``, ``depth``, ``inside``, and ``finite_source_id`` are optional.
+    If the event-ID column is absent, zero-based input row numbers are
+    generated before the stable time sort. Missing optional columns become
+    ``None``.
     """
 
     time: str = "time"
@@ -31,6 +32,7 @@ class CatalogColumns:
     event_id: str | None = "event_id"
     depth: str | None = "depth"
     inside: str | None = "inside"
+    finite_source_id: str | None = "finite_source_id"
 
     @classmethod
     def geographic_earthquake(
@@ -78,6 +80,7 @@ def load_catalog(
     device: torch.device | str = "cpu",
     sort_by_time: bool = True,
     delimiter: str | None = None,
+    column_names: Sequence[str] | None = None,
     time_unit: str = "unspecified",
     distance_unit: str = "unspecified",
     coordinate_system: str = "unspecified",
@@ -119,6 +122,10 @@ def load_catalog(
     columns:
         Canonical-to-input column mapping.  Either ``CatalogColumns`` or a
         partial mapping such as ``{"magnitude": "mag", "x": "x_proj"}``.
+    column_names:
+        Explicit field names for a headerless whitespace ``.etas`` file. When
+        supplied, the first non-comment row is treated as data rather than as
+        a header. This option is invalid for CSV, TSV, and Parquet input.
     dtype:
         Floating tensor type; currently ``torch.float32`` or ``torch.float64``.
     device:
@@ -146,26 +153,36 @@ def load_catalog(
                 ("event_id", "event_id"),
                 ("depth", "depth"),
                 ("inside", "inside"),
+                ("finite_source_id", "finite_source_id"),
             )
             if getattr(columns, canonical) not in {None, default_name}
         }
     else:
         explicitly_required_optional = {
             canonical
-            for canonical in ("event_id", "depth", "inside")
+            for canonical in (
+                "event_id",
+                "depth",
+                "inside",
+                "finite_source_id",
+            )
             if columns is not None
             and canonical in columns
             and columns[canonical] is not None
         }
         column_spec = CatalogColumns.from_mapping(columns)
     suffix = source_path.suffix.lower()
+    if column_names is not None and suffix != ".etas":
+        raise ValueError(
+            "column_names is only valid for headerless whitespace .etas input"
+        )
     if suffix in {".csv", ".tsv"}:
         actual_delimiter = delimiter or ("\t" if suffix == ".tsv" else ",")
         table = _read_delimited(source_path, actual_delimiter)
     elif suffix == ".etas":
         if delimiter is not None:
             raise ValueError("delimiter is only valid for CSV or TSV input")
-        table = _read_whitespace(source_path)
+        table = _read_whitespace(source_path, column_names=column_names)
     elif suffix in {".parquet", ".pq"}:
         if delimiter is not None:
             raise ValueError("delimiter is only valid for CSV or TSV input")
@@ -244,9 +261,23 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _read_whitespace(path: Path) -> dict[str, list[Any]]:
+def _read_whitespace(
+    path: Path,
+    *,
+    column_names: Sequence[str] | None = None,
+) -> dict[str, list[Any]]:
     header: list[str] | None = None
+    if column_names is not None:
+        if isinstance(column_names, (str, bytes)):
+            raise TypeError("column_names must be a sequence of field names")
+        header = [str(name).strip() for name in column_names]
+        if not header or any(not name for name in header):
+            raise ValueError("column_names must contain non-empty field names")
+        if len(set(header)) != len(header):
+            raise ValueError("column_names contains duplicate field names")
     table: dict[str, list[Any]] = {}
+    if header is not None:
+        table = {name: [] for name in header}
     with path.open("r", encoding="utf-8-sig") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             stripped = raw_line.strip()
@@ -316,6 +347,13 @@ def _table_to_catalog(
         raise ValueError("depth_positive must be 'up', 'down', or 'unspecified'")
     if columns.event_id is None and "event_id" in explicitly_required_optional:
         raise ValueError("event_id cannot be required when its column name is None")
+    if (
+        columns.finite_source_id is None
+        and "finite_source_id" in explicitly_required_optional
+    ):
+        raise ValueError(
+            "finite_source_id cannot be required when its column name is None"
+        )
     required = {
         "time": columns.time,
         "x": columns.x,
@@ -375,6 +413,14 @@ def _table_to_catalog(
     inside = (
         _boolean_values(table[columns.inside], columns.inside)
         if columns.inside is not None and columns.inside in table
+        else None
+    )
+    finite_source_id = (
+        _integer_values(
+            table[columns.finite_source_id], columns.finite_source_id
+        )
+        if columns.finite_source_id is not None
+        and columns.finite_source_id in table
         else None
     )
 
@@ -447,6 +493,9 @@ def _table_to_catalog(
         inside=None
         if inside is None
         else torch.tensor(reordered(inside), dtype=torch.bool),
+        finite_source_id=None
+        if finite_source_id is None
+        else torch.tensor(reordered(finite_source_id), dtype=torch.int64),
         metadata=catalog_metadata,
     )
 

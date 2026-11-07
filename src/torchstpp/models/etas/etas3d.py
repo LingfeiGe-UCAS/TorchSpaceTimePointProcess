@@ -30,8 +30,8 @@ class ETAS3DParameters(ETAS2DParameters):
             d=base.d,
             q=base.q,
             gamma=base.gamma,
-            eta=ParameterConfig(10.0, lower_bound=0.0),
-            delta=ParameterConfig(0.1, lower_bound=0.0),
+            eta=ParameterConfig(10.0, lower_bound=0.0, transform="square"),
+            delta=ParameterConfig(0.1, lower_bound=0.0, transform="square"),
         )
 
 
@@ -48,6 +48,7 @@ class ETAS3D(ETAS2D):
         depth_reference_magnitude_offset: float = 0.0,
         background: BackgroundModel | None = None,
         spatial_integrator: SpatialIntegrator | None = None,
+        minimum_spatial_scale: float = 0.0,
     ) -> None:
         parameters = parameters or ETAS3DParameters.defaults()
         if maximum_depth <= 0:
@@ -74,12 +75,16 @@ class ETAS3D(ETAS2D):
             background = GaussianBetaKDEBackground(
                 maximum_depth=maximum_depth,
                 depth_concentration=background_depth_concentration,
-                boundary_offset=depth_boundary_offset,
+                # Legacy Fortran applies the half-kilometre correction to
+                # triggering kernels, but evaluates the background KDE at the
+                # catalog's exact depth endpoints.
+                boundary_offset=None,
             )
         super().__init__(
             parameters,
             background=background,
             spatial_integrator=spatial_integrator,
+            minimum_spatial_scale=minimum_spatial_scale,
         )
         self.maximum_depth = maximum_depth
         self.depth_boundary_offset = depth_boundary_offset
@@ -106,10 +111,10 @@ class ETAS3D(ETAS2D):
                 transform=eta_config.transform,
             )
         self.eta_parameter = ModelParameter(
-            eta_config, lower_bound=0.0
+            eta_config, lower_bound=0.0, transform="square"
         )
         self.delta_parameter = ModelParameter(
-            parameters.delta, lower_bound=0.0
+            parameters.delta, lower_bound=0.0, transform="square"
         )
 
     @staticmethod
@@ -179,6 +184,7 @@ class ETAS3D(ETAS2D):
                 transform=old_parameter.transform,
             ),
             lower_bound=0.0,
+            transform="square",
         ).to(device=old_parameter.raw.device, dtype=old_parameter.raw.dtype)
         self.eta_parameter = replacement
         self._depth_reference_magnitude_offset.fill_(new_offset)

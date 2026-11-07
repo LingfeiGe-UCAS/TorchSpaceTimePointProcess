@@ -73,7 +73,7 @@ def compute_event_state(
         for source_begin in range(0, event_count, source_chunk_size):
             source_end = min(source_begin + source_chunk_size, event_count)
             source = catalog.take(slice(source_begin, source_end))
-            if source.time[0] >= target.time[-1]:
+            if source.time[0] > target.time[-1]:
                 break
             intensity.add_(model.pairwise_rate(target, source).sum(dim=-1))
 

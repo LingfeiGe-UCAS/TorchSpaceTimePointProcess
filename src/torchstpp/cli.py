@@ -11,7 +11,7 @@ from .application import run_etas
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="torchstpp",
-        description="Fit an ETAS2D or point-source ETAS3D model from TOML.",
+        description="Fit an ETAS2D, point-source ETAS3D, or finite-source ETAS3D model from TOML.",
     )
     parser.add_argument("config", type=Path, help="path to the ETAS TOML file")
     parser.add_argument(

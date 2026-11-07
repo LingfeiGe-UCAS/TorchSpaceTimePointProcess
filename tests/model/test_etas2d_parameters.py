@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import torch
 
 from torchstpp.models.backgrounds import GaussianKDEBackground
@@ -64,3 +66,34 @@ def test_etas2d_default_and_custom_background():
     custom_background = CustomBackground()
     custom_model = ETAS2D(background=custom_background)
     assert custom_model.background is custom_background
+
+
+def test_optional_minimum_spatial_scale_is_additive_and_differentiable():
+    source = SimpleNamespace(
+        magnitude=torch.tensor([3.0, 4.0]),
+        completeness_magnitude=torch.tensor(3.0),
+    )
+    default_model = ETAS2D()
+    floored_model = ETAS2D(minimum_spatial_scale=0.25)
+
+    assert torch.allclose(
+        default_model.spatial_scale(source),
+        default_model.d * torch.exp(default_model.gamma * torch.tensor([0.0, 1.0])),
+    )
+    assert torch.allclose(
+        floored_model.spatial_scale(source),
+        floored_model.minimum_spatial_scale
+        + floored_model.d * torch.exp(floored_model.gamma * torch.tensor([0.0, 1.0])),
+    )
+    floored_model.spatial_scale(source).sum().backward()
+    assert floored_model.d_parameter.raw.grad is not None
+
+
+def test_minimum_spatial_scale_rejects_invalid_values():
+    for value in (-1.0, float("nan"), float("inf")):
+        try:
+            ETAS2D(minimum_spatial_scale=value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"minimum_spatial_scale accepted {value!r}")

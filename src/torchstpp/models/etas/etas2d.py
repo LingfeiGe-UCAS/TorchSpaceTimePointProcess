@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 from typing import Any
 
 import torch
@@ -43,9 +44,13 @@ class ETAS2D(nn.Module):
         *,
         background: BackgroundModel | None = None,
         spatial_integrator: SpatialIntegrator | None = None,
+        minimum_spatial_scale: float = 0.0,
     ) -> None:
         super().__init__()
         parameters = parameters or ETAS2DParameters.defaults()
+        minimum_spatial_scale = float(minimum_spatial_scale)
+        if not math.isfinite(minimum_spatial_scale) or minimum_spatial_scale < 0.0:
+            raise ValueError("minimum_spatial_scale must be finite and non-negative")
         self.background = (
             GaussianKDEBackground()
             if background is None
@@ -64,6 +69,10 @@ class ETAS2D(nn.Module):
         self.d_parameter = self._build_parameter(parameters.d, 0.0)
         self.q_parameter = self._build_parameter(parameters.q, 1.0)
         self.gamma_parameter = self._build_parameter(parameters.gamma, 0.0)
+        self.register_buffer(
+            "_minimum_spatial_scale",
+            torch.tensor(minimum_spatial_scale),
+        )
 
     @staticmethod
     def _build_parameter(
@@ -114,6 +123,12 @@ class ETAS2D(nn.Module):
     @property
     def gamma(self): return self.gamma_parameter()
 
+    @property
+    def minimum_spatial_scale(self) -> torch.Tensor:
+        """Fixed squared-coordinate floor added to every spatial kernel scale."""
+
+        return self._minimum_spatial_scale
+
     def parameter_values(self) -> dict[str, torch.Tensor]:
         return {name: getattr(self, name) for name in (
             "mu", "amplitude", "alpha", "c", "p", "d", "q", "gamma"
@@ -123,11 +138,19 @@ class ETAS2D(nn.Module):
         dm = source.magnitude - source.completeness_magnitude
         return self.amplitude * torch.exp(self.alpha * dm)
 
-    def temporal_kernel(self, delta_time: torch.Tensor) -> torch.Tensor:
+    def temporal_kernel(
+        self,
+        delta_time: torch.Tensor,
+        causal_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         p, c = self.p, self.c
         safe_delta = delta_time.clamp_min(0.0)
         rate = (p - 1.0) * torch.pow(1.0 + safe_delta / c, -p) / c
-        return torch.where(delta_time > 0.0, rate, torch.zeros_like(rate))
+        if causal_mask is None:
+            causal_mask = delta_time > 0.0
+        elif causal_mask.shape != delta_time.shape or causal_mask.dtype != torch.bool:
+            raise ValueError("causal_mask must be a bool tensor matching delta_time")
+        return torch.where(causal_mask, rate, torch.zeros_like(rate))
 
     def temporal_integral(self, source_time, time_start, time_end) -> torch.Tensor:
         p, c = self.p, self.c
@@ -142,7 +165,7 @@ class ETAS2D(nn.Module):
 
     def spatial_scale(self, source: Any) -> torch.Tensor:
         dm = source.magnitude - source.completeness_magnitude
-        return self.d * torch.exp(self.gamma * dm)
+        return self.minimum_spatial_scale + self.d * torch.exp(self.gamma * dm)
 
     @staticmethod
     def _match_dimensions(value: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
@@ -188,7 +211,16 @@ class ETAS2D(nn.Module):
         distance_squared = displacement.square().sum(dim=-1)
 
         productivity = self.magnitude_productivity(source)[None, :]
-        temporal = self.temporal_kernel(delta_time)
+        target_order = getattr(target, "sequence_index", None)
+        source_order = getattr(source, "sequence_index", None)
+        causal_mask = None
+        if target_order is not None or source_order is not None:
+            if target_order is None or source_order is None:
+                raise ValueError(
+                    "target and source must both provide sequence_index or neither"
+                )
+            causal_mask = source_order[None, :] < target_order[:, None]
+        temporal = self.temporal_kernel(delta_time, causal_mask)
         spatial = self.spatial_kernel(distance_squared, source)
         return productivity * temporal * spatial
 

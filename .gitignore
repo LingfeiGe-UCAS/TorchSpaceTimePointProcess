@@ -29,7 +29,9 @@ __MACOSX/
 *.tmp
 
 # Catalogs, generated results, and checkpoints
-data/
+# Anchor catalog data to the repository root so Python packages named `data`
+# under src/ and tests/ remain version-controlled.
+/data/
 output/
 outputs/
 *.pt
@@ -38,6 +40,7 @@ outputs/
 *.parquet
 
 # Archived project snapshots kept locally
+/zhou_addiation/
 scripts/torchstpp_multigpu/
 scripts/torchstpp_pair_budget/
 scripts/*.zip

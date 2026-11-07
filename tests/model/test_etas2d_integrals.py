@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import torch
 
+from torchstpp.data import EventCatalog
 from torchstpp.integration import InfiniteSpaceIntegrator, PolygonSpatialIntegrator
 from torchstpp.models.etas import ETAS2D
 
@@ -125,3 +126,22 @@ def test_pairwise_matches_old_formula():
     expected = torch.where(mask, productivity * temporal * spatial, 0.0)
 
     assert torch.allclose(actual, expected)
+
+
+def test_equal_time_events_follow_catalog_sequence_index():
+    model = ETAS2D().to(dtype=torch.float64)
+    catalog = EventCatalog(
+        event_id=torch.tensor([30, 10, 20], dtype=torch.int64),
+        time=torch.tensor([0.0, 1.0, 1.0], dtype=torch.float64),
+        position=torch.tensor(
+            [[0.0, 0.0], [0.1, 0.0], [0.2, 0.0]], dtype=torch.float64
+        ),
+        magnitude=torch.tensor([3.0, 3.0, 3.0], dtype=torch.float64),
+        completeness_magnitude=torch.tensor(3.0, dtype=torch.float64),
+    )
+
+    rate = model.pairwise_rate(catalog, catalog)
+
+    assert rate[2, 1] > 0.0  # equal time, but source row 1 precedes target row 2
+    assert rate[1, 2] == 0.0
+    assert torch.all(torch.diagonal(rate) == 0.0)
